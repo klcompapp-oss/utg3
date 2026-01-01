@@ -2611,8 +2611,9 @@ local HttpService = game:GetService("HttpService")
 
 
 -- === CONFIG ===
-local WebhookURL =
-    "https://discordapp.com/api/webhooks/1451412982595715232/nKlEByWrinqckt2_gu_TIuRRkFjlF2JWgVvXmOaVn3pWRaq0UYV9n_iOY8lv0-FklM69"
+-- Webhook URL must be kept secret. Do NOT commit the real webhook URL.
+-- Set the actual webhook URL as a Netlify environment variable `validingawpxeno`.
+local WebhookURL = "REPLACE_WITH_WEBHOOK_URL"
 local cooldownTime = 20
 local cooldownFilePath = "cld/cld_path"
 local lastSendTime = 0
