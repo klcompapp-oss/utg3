@@ -1,0 +1,363 @@
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local tweenService = game:GetService("TweenService")
+local runService = game:GetService("RunService")
+local userInputService = game:GetService("UserInputService")
+
+-- Function to create a styled button
+local function createStyledButton(parent, text, position)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(1, 0, 0.2, 0)
+    button.Position = position
+    button.Text = text
+    button.TextScaled = true
+    button.Font = Enum.Font.SourceSansSemibold
+    button.TextColor3 = Color3.new(1, 1, 1)
+    button.BackgroundColor3 = Color3.new(0.5, 0.5, 0.5)
+    button.BackgroundTransparency = 0.5
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0.25, 0)
+    corner.Parent = button
+
+    button.Parent = parent
+
+    return button
+end
+
+-- Create the GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 150, 0, 240)
+frame.Position = UDim2.new(0, 10, 0, 10)
+frame.BackgroundTransparency = 1
+frame.ZIndex = 100
+frame.Parent = screenGui
+
+local buttonSpacing = 0.25
+local teleportButton = createStyledButton(frame, "Teleport / Back (T)", UDim2.new(0, 0, 0 * buttonSpacing, 0))
+local teleportAndCreateBlockButton = createStyledButton(frame, "Teleport & Create Blocks (R)", UDim2.new(0, 0, 1 * buttonSpacing, 0))
+local farmCoinButton = createStyledButton(frame, "Start Farm Coin (F)", UDim2.new(0, 0, 2 * buttonSpacing, 0))
+
+-- Variables for visibility toggle
+local buttonsVisible = true
+local toggleButton
+local closeButton
+
+-- Function to toggle the visibility of buttons
+local function toggleButtons()
+    buttonsVisible = not buttonsVisible
+    frame.Visible = buttonsVisible
+    if buttonsVisible then
+        toggleButton.Text = "Hide Buttons"
+    else
+        toggleButton.Text = "Show Buttons"
+    end
+end
+
+-- Create the toggle button with the same styling as other buttons
+toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 150, 0, 50) -- Same width as other buttons
+toggleButton.Position = UDim2.new(0, 160, 0, 10) -- Positioned next to the main frame
+toggleButton.Text = "Hide Buttons"
+toggleButton.TextScaled = true
+toggleButton.Font = Enum.Font.SourceSansSemibold
+toggleButton.TextColor3 = Color3.new(1, 1, 1)
+toggleButton.BackgroundColor3 = Color3.new(0.5, 0.5, 0.5)
+toggleButton.BackgroundTransparency = 0.5
+toggleButton.ZIndex = 100
+toggleButton.Parent = screenGui
+
+-- Add corner styling to the toggle button
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0.25, 0) -- Same corner radius as other buttons
+corner.Parent = toggleButton
+
+-- Create the close button (X) for the toggle button
+closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 20, 0, 20)
+closeButton.Position = UDim2.new(1, -25, 0, -10) -- Positioned at the top-right corner of the toggle button
+closeButton.Text = "X"
+closeButton.Font = Enum.Font.SourceSansSemibold
+closeButton.TextColor3 = Color3.new(1, 1, 1)
+closeButton.BackgroundColor3 = Color3.new(1, 0, 0)
+closeButton.ZIndex = 101
+closeButton.Parent = toggleButton
+
+-- Function to close the ScreenGui when X is clicked
+closeButton.MouseButton1Click:Connect(function()
+    screenGui:Destroy() -- Destroy the entire ScreenGui
+end)
+
+-- Make toggle button draggable
+local dragging = false
+local dragInput, dragStart, startPos
+
+local function update(input)
+    local delta = input.Position - dragStart
+    toggleButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+toggleButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = toggleButton.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+toggleButton.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+userInputService.InputChanged:Connect(function(input)
+    if dragging and input == dragInput then
+        update(input)
+    end
+end)
+
+-- Connect the toggle button to hide/show functionality
+toggleButton.MouseButton1Click:Connect(toggleButtons)
+
+-- Variables for teleport functionality
+local initialPosition
+local isTeleported = false
+local lastTeleportedPlayer
+local debounce = false
+
+-- Function to teleport to a player
+local function teleportToPlayer(targetPlayer)
+    if not player.Character or not player.Character.PrimaryPart then
+        return
+    end
+
+    if not targetPlayer.Character or not targetPlayer.Character.PrimaryPart then
+        return
+    end
+
+    initialPosition = player.Character.PrimaryPart.Position
+    player.Character:SetPrimaryPartCFrame(targetPlayer.Character.PrimaryPart.CFrame)
+    isTeleported = true
+    teleportButton.Text = "Return back (T)"
+    lastTeleportedPlayer = targetPlayer
+end
+
+local function findNextPlayer()
+    local allPlayers = Players:GetPlayers() -- Cache daftar player
+    local playerRole = player:FindFirstChild("PlayerRole") and player.PlayerRole.Value or nil
+    local eligiblePlayers = {}
+    local prioritizedPlayers = {}
+
+    for _, otherPlayer in ipairs(allPlayers) do
+        if otherPlayer ~= player and otherPlayer:FindFirstChild("PlayerRole") then
+            local otherPlayerRole = otherPlayer.PlayerRole.Value
+            -- Teleport ke player lain hanya jika sesuai kondisi
+            if otherPlayerRole ~= "Dead" and (otherPlayer ~= lastTeleportedPlayer or #allPlayers == 2) then
+                table.insert(eligiblePlayers, otherPlayer)
+                if (playerRole == "Bomb" or playerRole == "Runner") and otherPlayerRole == "Crown" then
+                    table.insert(prioritizedPlayers, otherPlayer)
+                end
+            end
+        end
+    end
+
+    -- If there are prioritized players, teleport to one of them
+    if #prioritizedPlayers > 0 then
+        local randomIndex = math.random(1, #prioritizedPlayers)
+        return prioritizedPlayers[randomIndex]
+    end
+
+    -- If no prioritized players, select a random eligible player
+    if #eligiblePlayers > 0 then
+        local randomIndex = math.random(1, #eligiblePlayers)
+        return eligiblePlayers[randomIndex]
+    else
+        -- If no eligible players, fallback to any other available player with different PlayerRole
+        local fallbackPlayers = {}
+        for _, otherPlayer in ipairs(Players:GetPlayers()) do
+            if otherPlayer ~= player and otherPlayer:FindFirstChild("PlayerRole") then
+                local otherPlayerRole = otherPlayer.PlayerRole.Value
+                if otherPlayerRole ~= "Dead" and otherPlayerRole ~= playerRole then
+                    table.insert(fallbackPlayers, otherPlayer)
+                end
+            end
+        end
+        if #fallbackPlayers > 0 then
+            local randomIndex = math.random(1, #fallbackPlayers)
+            return fallbackPlayers[randomIndex]
+        end
+    end
+
+    return nil
+end
+
+-- Toggle teleport functionality
+local function toggleTeleport()
+    if debounce then
+        return
+    end
+    debounce = true
+
+    if isTeleported then
+        if initialPosition then
+            player.Character:SetPrimaryPartCFrame(CFrame.new(initialPosition))
+            isTeleported = false
+            teleportButton.Text = "Teleport / Back (T)"
+        end
+    else
+        local targetPlayer = findNextPlayer()
+        if targetPlayer then
+            teleportToPlayer(targetPlayer)
+        else
+            print("No players found to teleport to.")
+            teleportButton.Text = "No players found"
+            wait(2) -- Delay to show message
+            teleportButton.Text = "Teleport / Back (T)"
+        end
+    end
+
+    debounce = false
+end
+
+-- Variabel untuk menyimpan referensi ke blok sebelumnya
+local previousBlock
+
+-- Teleport and create a block
+local function teleportAndCreateBlock()
+    -- Hapus blok sebelumnya jika ada
+    if previousBlock then
+        previousBlock:Destroy()
+    end
+
+    -- Simpan posisi awal
+    initialPosition = player.Character.PrimaryPart.Position
+
+    -- Acak posisi X, Z, dan tinggi
+    local randomX = math.random(-500, 500) -- Sesuaikan batas acak sesuai keinginan Anda
+    local randomZ = math.random(-500, 500) -- Sesuaikan batas acak sesuai keinginan Anda
+    local randomHeight = math.random(397, 900) -- Acak tinggi untuk blok
+    local playerHeight = randomHeight + 3 -- Tinggi pemain selalu 3 unit di atas blok
+
+    -- Teleport pemain ke posisi baru dengan tinggi acak
+    player.Character:SetPrimaryPartCFrame(CFrame.new(randomX, playerHeight, randomZ))
+    isTeleported = true
+    teleportButton.Text = "Return (T)"
+
+    -- Buat blok di posisi yang sama dengan pemain, tapi dengan tinggi 3 unit lebih rendah
+    local block = Instance.new("Part")
+    block.Size = Vector3.new(100, 3, 100)
+    block.Position = Vector3.new(randomX, randomHeight, randomZ)
+    block.Anchored = true
+    block.Material = Enum.Material.Plastic
+    block.Color = Color3.new(1, 1, 1)
+    block.Transparency = 0.7
+    block.Parent = workspace
+
+    -- Simpan referensi ke blok baru sebagai previousBlock
+    previousBlock = block
+end
+
+-- Toggle farm coin functionality
+local farmCoinActive = false
+local farmCoinLoop
+local lastCFrame = nil
+local timeSinceLastMove = 0
+local stopThreshold = 3
+
+local function teleportToPosition(targetPosition)
+    local character = player.Character
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        local offset = Vector3.new(math.random(-4, 4), 6, math.random(-4, 4))
+        local newPosition = targetPosition.Position + offset
+        character:SetPrimaryPartCFrame(CFrame.new(newPosition))
+    end
+end
+
+local function findNewTarget()
+    -- Cek koin di workspace.coins
+    local coinsFolder = workspace:FindFirstChild("coins")
+    if coinsFolder then
+        local coinContainer = coinsFolder:FindFirstChild("Coin")
+        if coinContainer then
+            for _, coin in pairs(coinContainer:GetChildren()) do
+                if coin:IsA("MeshPart") and coin.Transparency < 1 then
+                    return coin
+                end
+            end
+        end
+    end
+
+    -- Cek cash di workspace.specialcurrency.Cash
+    local cashFolder = workspace:FindFirstChild("specialcurrency")
+    if cashFolder then
+        local cashModel = cashFolder:FindFirstChild("Cash")
+        if cashModel and cashModel:IsA("Model") then
+            for _, part in pairs(cashModel:GetChildren()) do
+                if part:IsA("Part") then
+                    return part
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function toggleFarmCoin()
+    farmCoinActive = not farmCoinActive
+    if farmCoinActive then
+        farmCoinButton.Text = "Stop Farm Coin (F)"
+        farmCoinLoop = coroutine.create(function()
+            while farmCoinActive do
+                local target = findNewTarget()
+                if target and target.CFrame ~= lastCFrame then
+                    lastCFrame = target.CFrame
+                    teleportToPosition(target.CFrame)
+                    timeSinceLastMove = 0
+                else
+                    timeSinceLastMove = timeSinceLastMove + 0.6
+                end
+                wait(0.6)
+            end
+        end)
+        coroutine.resume(farmCoinLoop)
+    else
+        farmCoinButton.Text = "Start Farm Coin (F)"
+    end
+end
+
+local UserInputService = game:GetService("UserInputService")
+
+-- Fungsi untuk menangani input keyboard
+local function onInputBegan(input, gameProcessed)
+    if gameProcessed then return end  -- Hindari memproses input yang sudah digunakan oleh game
+
+    if input.KeyCode == Enum.KeyCode.T then
+        toggleTeleport()
+    elseif input.KeyCode == Enum.KeyCode.R then
+        teleportAndCreateBlock()
+    elseif input.KeyCode == Enum.KeyCode.F then
+        toggleFarmCoin()
+    end
+end
+
+-- Hubungkan event ke tombol UI
+teleportButton.MouseButton1Click:Connect(toggleTeleport)
+teleportAndCreateBlockButton.MouseButton1Click:Connect(teleportAndCreateBlock)
+farmCoinButton.MouseButton1Click:Connect(toggleFarmCoin)
+
+-- Hubungkan event ke keyboard
+UserInputService.InputBegan:Connect(onInputBegan)
+
+print("executing")

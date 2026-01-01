@@ -1,0 +1,135 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
+
+local localPlayer = Players.LocalPlayer
+local tagEventPath = ReplicatedStorage:FindFirstChild("Events") and ReplicatedStorage.Events:FindFirstChild("game") 
+    and ReplicatedStorage.Events.game:FindFirstChild("tags") and ReplicatedStorage.Events.game.tags:FindFirstChild("TagPlayer")
+
+if not tagEventPath then
+    warn("[ERROR] TagPlayer event not found! Check ReplicatedStorage structure.")
+    return
+end
+
+local lastTagTime = {}
+local tagAuraRange = UserInputService.TouchEnabled and 7 or 9 -- 7 studs untuk mobile, 9 untuk PC
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+
+local localPlayer = Players.LocalPlayer
+local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+
+if not playerGui then
+    warn("[ERROR] PlayerGui not found!")
+    return
+end
+
+-- Buat GUI jika belum ada
+local screenGui = playerGui:FindFirstChild("TagToggleGui") or Instance.new("ScreenGui")
+screenGui.Name = "TagToggleGui"
+screenGui.ResetOnSpawn = false -- GUI tidak akan hilang saat respawn
+screenGui.Parent = playerGui
+
+-- Buat tombol toggle
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 50, 0, 50)
+toggleButton.Position = UDim2.new(0, 20, 1, -70) -- Posisikan di kiri bawah layar
+toggleButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Default merah (OFF)
+toggleButton.Text = "X"
+toggleButton.TextScaled = true
+toggleButton.Parent = screenGui
+
+-- Variabel toggle
+local tagEnabled = false
+
+-- Fungsi untuk update warna button
+local function updateToggleUI()
+    if tagEnabled then
+        toggleButton.BackgroundColor3 = Color3.fromRGB(0, 255, 0) -- Hijau (ON)
+    else
+        toggleButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Merah (OFF)
+    end
+end
+
+-- Fungsi untuk mengecek apakah target valid
+local function isValidTarget(player)
+    if not player or player == localPlayer then return false end
+    local character = player.Character
+    if not character then return false end
+    local humanoid = character:FindFirstChild("Humanoid")
+    local targetHRP = character:FindFirstChild("HumanoidRootPart")
+    local playerRole = player:FindFirstChild("PlayerRole")
+
+    if playerRole and playerRole:IsA("StringValue") and playerRole.Value == "Dead" then
+        return false
+    end
+
+    return humanoid and humanoid.Health > 0 and targetHRP
+end
+
+-- Fungsi untuk menandai pemain
+local function tagPlayer(player)
+    if not tagEnabled or not isValidTarget(player) then return end
+
+    local currentTime = tick()
+    if lastTagTime[player] and currentTime - lastTagTime[player] < 1 then return end
+
+    local localCharacter = localPlayer.Character
+    if not localCharacter then return end
+
+    local localHRP = localCharacter:FindFirstChild("HumanoidRootPart")
+    local targetCharacter = player.Character
+    local targetHRP = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
+    local targetHumanoid = targetCharacter and targetCharacter:FindFirstChild("Humanoid")
+
+    if not localHRP or not targetHRP or not targetHumanoid then return end
+
+    local distance = (localHRP.Position - targetHRP.Position).Magnitude
+    if distance > tagAuraRange then return end
+
+    -- Args yang lebih aman
+    local args = {
+        [1] = targetHumanoid,
+        [2] = targetHRP.Position
+    }
+
+    local success, response = pcall(function()
+        return tagEventPath:InvokeServer(unpack(args))
+    end)
+
+    if success and response then
+        print("[INFO] Target hit @", tick())
+        lastTagTime[player] = currentTime
+    else
+        warn("[ERROR] Failed to tag player, reason:", response)
+    end
+end
+
+-- Loop utama untuk auto-tagging
+RunService.Heartbeat:Connect(function()
+    if not tagEnabled then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        tagPlayer(player)
+    end
+end)
+
+toggleButton.MouseButton1Click:Connect(function()
+    tagEnabled = not tagEnabled
+    updateToggleUI()
+    print("[INFO] Tagging System:", tagEnabled and "ON" or "OFF")
+end)
+
+-- Event tekan tombol X di keyboard (PC)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.X then
+        tagEnabled = not tagEnabled
+        updateToggleUI()
+        print("[INFO] Tagging System:", tagEnabled and "ON" or "OFF")
+    end
+end)
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/wipff2/gef/refs/heads/main/credits.lua"))()
