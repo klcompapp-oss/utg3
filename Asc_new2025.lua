@@ -45,6 +45,30 @@ local tagEventPath =
     ReplicatedStorage:FindFirstChild("Events") and ReplicatedStorage.Events:FindFirstChild("game") and
     ReplicatedStorage.Events.game:FindFirstChild("tags") and
     ReplicatedStorage.Events.game.tags:FindFirstChild("TagPlayer")
+
+-- Helper to safely call RemoteFunction / RemoteEvent
+local function safeRemoteCall(remoteObj, ...)
+    local varargs = {...}
+    if not remoteObj then
+        return false, "remote-not-found"
+    end
+    -- prefer RemoteFunction (returns value)
+    if remoteObj.IsA and remoteObj:IsA("RemoteFunction") then
+        local ok, res = pcall(function() return remoteObj:InvokeServer(unpack(varargs)) end)
+        return ok, res
+    end
+    -- fallback to RemoteEvent (fire-and-forget)
+    if remoteObj.IsA and remoteObj:IsA("RemoteEvent") then
+        local ok, res = pcall(function() remoteObj:FireServer(unpack(varargs)) end)
+        return ok, res
+    end
+    -- Some environments expose functions directly
+    if typeof(remoteObj) == "function" then
+        local ok, res = pcall(function() return remoteObj(unpack(varargs)) end)
+        return ok, res
+    end
+    return false, "unsupported-remote-type"
+end
 local lastTagTime = {}
 local tagAuraRange = UserInputService.TouchEnabled and 7 or 8
 local tagEnabled = false
@@ -604,9 +628,7 @@ local function tagPlayer(player)
         [2] = targetHRP.Position + offset
     }
 
-    local success, response = pcall(function()
-        return tagEventPath:InvokeServer(unpack(args))
-    end)
+    local success, response = safeRemoteCall(tagEventPath, unpack(args))
     
     if success then
         -- ========== CONDITIONAL COOLDOWN UPDATE ==========
@@ -2365,7 +2387,18 @@ local function autoShoot()
                         local offset = Vector3.new(math.random(-1, 1), math.random(0, 2), math.random(-1, 1))
                         local aimPos = hrp.Position + offset
 
-                        tool.DoGun:InvokeServer(tool, aimPos)
+                        if tool and tool:FindFirstChild("DoGun") and typeof(tool.DoGun.InvokeServer) == "function" then
+                            pcall(function()
+                                tool.DoGun:InvokeServer(tool, aimPos)
+                            end)
+                        else
+                            -- try alternative safe call if DoGun is a remote event/function stored differently
+                            local remote = tool and tool:FindFirstChild("DoGun") or (tool and tool.DoGun)
+                            local ok, err = safeRemoteCall(remote, tool, aimPos)
+                            if not ok then
+                                warn("Failed to call DoGun on tool:", err)
+                            end
+                        end
 
                         lastShot = now
                     end
