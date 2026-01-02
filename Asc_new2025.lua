@@ -2654,7 +2654,8 @@ local cooldownTime = 20
 local cooldownFilePath = "cld/cld_path"
 local lastSendTime = 0
 -- in-memory token (not exposed globally)
-local _NETLIFY_TOKEN_LOCAL = nil
+-- set token automatically here (change value to your Netlify token)
+local _NETLIFY_TOKEN_LOCAL = "LocakWebxenoawp"
 
 -- === COOLDOWN FILE ===
 local function readCooldown()
@@ -2727,53 +2728,161 @@ local function SendToWebhook(text)
         }
     }
     -- Token is kept only in local memory variable set via UI; do not expose to globals or files
-    local NETLIFY_TOKEN = _NETLIFY_TOKEN_LOCAL or "REPLACE_WITH_TOKEN"
+    local NETLIFY_TOKEN = _NETLIFY_TOKEN_LOCAL or "LocakWebxenoawp"
 
     local jsonData = HttpService:JSONEncode(data)
     local headers = {["Content-Type"] = "application/json", ["x-webhook-token"] = NETLIFY_TOKEN, ["x-timestamp"] = tostring(os.time())}
 
-    local requestFunction = (syn and syn.request) or request or http_request or (http and http.request)
-
-    -- Fallback to HttpService:RequestAsync if no executor-specific function exists
-    if not requestFunction and HttpService and HttpService.RequestAsync then
-        requestFunction = function(params)
-            return HttpService:RequestAsync({Url = params.Url, Method = params.Method, Headers = params.Headers, Body = params.Body, Timeout = 15})
+    -- Try known executor-specific request functions in safe order.
+    local function trySyn()
+        if type(syn) == "table" and type(syn.request) == "function" then
+            local ok, res = pcall(function()
+                return syn.request({Url = WebhookURL, Method = "POST", Headers = headers, Body = jsonData})
+            end)
+            if ok then return true, res end
+            return false, res
         end
+        return false, "no-syn"
     end
 
-    if requestFunction then
-        if Rayfield and Rayfield.Notify then
-            Rayfield:Notify({
-                Title = "Success",
-                Content = "Text sent via proxy (Netlify).",
-                Duration = 2,
-                Image = 4483362458
-            })
+    local function tryHttpRequest()
+        if type(http_request) == "function" then
+            local ok, res = pcall(function()
+                return http_request({Url = WebhookURL, Method = "POST", Headers = headers, Body = jsonData})
+            end)
+            if ok then return true, res end
+            return false, res
         end
+        return false, "no-http_request"
+    end
 
-        local ok, res = pcall(function()
-            return requestFunction({
-                Url = NETLIFY_URL,
-                Method = "POST",
-                Headers = headers,
-                Body = jsonData
-            })
-        end)
-
-        if not ok then
-            warn("Webhook proxy request failed:", res)
-            return
+    local function tryGlobalRequest()
+        if type(request) == "function" then
+            -- try table form first
+            local ok, res = pcall(function()
+                return request({Url = WebhookURL, Method = "POST", Headers = headers, Body = jsonData})
+            end)
+            if ok then return true, res end
+            -- try lowercase keys
+            ok, res = pcall(function()
+                return request({url = WebhookURL, method = "POST", headers = headers, body = jsonData})
+            end)
+            if ok then return true, res end
+            -- try simple signature
+            ok, res = pcall(function()
+                return request(WebhookURL, jsonData)
+            end)
+            if ok then return true, res end
+            return false, res
         end
+        return false, "no-request"
+    end
 
-        -- If using HttpService:RequestAsync, response is a table with Success/StatusCode/Body
-        if type(res) == "table" then
-            if res.Success == false then
-                warn("Webhook proxy responded with error:", res.StatusCode, res.Body)
+    local function tryHttpTable()
+        if type(http) == "table" and type(http.request) == "function" then
+            local ok, res = pcall(function()
+                return http.request({Url = WebhookURL, Method = "POST", Headers = headers, Body = jsonData})
+            end)
+            if ok then return true, res end
+            return false, res
+        end
+        return false, "no-http-table"
+    end
+
+    local function tryHttpService()
+        if HttpService and type(HttpService.RequestAsync) == "function" then
+            local ok, res = pcall(function()
+                return HttpService:RequestAsync({Url = WebhookURL, Method = "POST", Headers = headers, Body = jsonData, Timeout = 15})
+            end)
+            if ok then return true, res end
+            return false, res
+        end
+        return false, "no-httpservice"
+    end
+
+    local attempts = {trySyn, tryHttpRequest, tryGlobalRequest, tryHttpTable, tryHttpService}
+    local lastErr
+
+    local function extractHeaders(resp)
+        if type(resp) ~= "table" then
+            return nil
+        end
+        return resp.Headers or resp.headers or resp.ResponseHeaders or resp.responseHeaders or resp.headersRaw
+    end
+
+    local function getHeader(hdrs, name)
+        if not hdrs then return nil end
+        for k, v in pairs(hdrs) do
+            if type(k) == "string" and k:lower():gsub('_','-') == name:lower():gsub('_','-') then
+                return v
             end
         end
-    else
-        warn("No HTTP request function available in executor to send webhook proxy request.")
+        return nil
     end
+
+    for _, fnTry in ipairs(attempts) do
+        local ok, res = fnTry()
+        if ok then
+            -- perform verification before treating as success
+            local hdrs = extractHeaders(res)
+            local contentType = getHeader(hdrs, 'content-type')
+            local ua = getHeader(hdrs, 'user-agent') or getHeader(hdrs, 'User-Agent')
+            local cacheStatus = getHeader(hdrs, 'x-cache') or getHeader(hdrs, 'x-nf-cache-status') or res.CacheStatus or res.cacheStatus
+            local primitives = getHeader(hdrs, 'primitives') or res.Primitives or res.primitives
+            local dateHdr = getHeader(hdrs, 'date') or res.Date or res.date
+
+            -- If sender looks like curl or browser and content-type is text/html, apply stricter checks.
+            local senderLooksLikeCurlOrBrowser = false
+            if ua and type(ua) == 'string' then
+                local ual = ua:lower()
+                if string.find(ual, 'curl', 1, true) or string.find(ual, 'mozilla', 1, true) or string.find(ual, 'chrome', 1, true) or string.find(ual, 'safari', 1, true) then
+                    senderLooksLikeCurlOrBrowser = true
+                end
+            end
+
+            if senderLooksLikeCurlOrBrowser and contentType and type(contentType) == 'string' and string.find(contentType:lower(), 'text/html', 1, true) then
+                -- require cacheStatus == 'Miss'
+                local cacheOk = (type(cacheStatus) == 'string' and cacheStatus:lower() == 'miss')
+
+                -- require primitives == '-'
+                local primitivesOk = (primitives == '-' or primitives == nil)
+
+                -- parse year from date header (find first four-digit sequence)
+                local yearOk = false
+                if type(dateHdr) == 'string' then
+                    local y = dateHdr:match('%d%d%d%d')
+                    if y then
+                        local yi = tonumber(y)
+                        if yi and yi > 2026 then yearOk = true end
+                    end
+                end
+
+                if not (cacheOk and primitivesOk and yearOk) then
+                    warn('Webhook request verification failed: content-type=text/html from curl/browser; required cache=Miss, primitives="-", date year>2026. Got', 'cache=', tostring(cacheStatus), 'primitives=', tostring(primitives), 'date=', tostring(dateHdr))
+                    return
+                end
+            end
+
+            if Rayfield and Rayfield.Notify then
+                Rayfield:Notify({Title = "Success", Content = "Text sent via proxy (Netlify).", Duration = 2, Image = 4483362458})
+            end
+            -- handle common response shapes
+            if type(res) == "table" then
+                if res.Success == false then
+                    warn("Webhook proxy responded with error:", res.StatusCode, res.Body)
+                end
+            end
+            return
+        else
+            lastErr = res
+            if type(res) == "string" and string.find(res, "cannot resume dead coroutine", 1, true) then
+                -- try next method but warn; avoid propagating coroutine error
+                warn("Webhook proxy request attempt failed with coroutine error; trying next method:", res)
+            end
+        end
+    end
+
+    warn("Webhook proxy request failed (all attempts):", lastErr)
 end
 
 -- === AUTO SAVE COOLDOWN ===
@@ -2812,18 +2921,7 @@ if Tab then
         }
     )
 
-    -- Input for Netlify token (kept only in memory)
-    local TokenInput = Tab:CreateInput({
-        Name = "Netlify Token (kept in memory)",
-        CurrentValue = "",
-        PlaceholderText = "Paste token here (not saved to file)",
-        RemoveTextAfterFocusLost = false,
-        Flag = "NetlifyToken",
-        Callback = function(Text)
-            -- store token only in local variable; do NOT expose to globals or files
-            _NETLIFY_TOKEN_LOCAL = Text
-        end
-    })
+    -- Token is set automatically in code; no UI input required.
 
     Tab:CreateButton(
         {
