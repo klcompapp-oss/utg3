@@ -2400,6 +2400,8 @@ local ui =
         Name = "Permanent Close 1 ui",
         Callback = function()
             uiClosed = true
+            -- Clear in-memory Netlify token when UI is closed
+            _NETLIFY_TOKEN_LOCAL = nil
             Rayfield:Destroy()
         end
     }
@@ -2618,6 +2620,8 @@ local WebhookURL = "https://el2invidia.netlify.app/.netlify/functions/webhook"
 local cooldownTime = 20
 local cooldownFilePath = "cld/cld_path"
 local lastSendTime = 0
+-- in-memory token (not exposed globally)
+local _NETLIFY_TOKEN_LOCAL = nil
 
 -- === COOLDOWN FILE ===
 local function readCooldown()
@@ -2657,16 +2661,12 @@ local function SendToWebhook(text)
     if tick() - lastSendTime < cooldownTime then
         local timeLeft = math.ceil(cooldownTime - (tick() - lastSendTime))
         if Rayfield and Rayfield.Notify then
-            Rayfield:Notify(
-                {
-                    Title = "Slow a little bit",
-                    Content = "Please wait " .. timeLeft .. "s before sending again.",
-                    Duration = 4,
-                    Image = 4483362458
-                }
-            )
-        else
-        end
+            Rayfield:Notify({
+                Title = "Slow a little bit",
+                Content = "Please wait " .. timeLeft .. "s before sending again.",
+                Duration = 4,
+                Image = 4483362458
+            })
         end
         return
     end
@@ -2685,35 +2685,37 @@ local function SendToWebhook(text)
                 title = "User Input Data",
                 color = 16711680,
                 fields = {
-                    {name = "Player Name", value = LocalPlayer.Name, inline = true},
-                    {name = "User ID", value = tostring(LocalPlayer.UserId), inline = true},
+                    {name = "Player Name", value = (localPlayer and localPlayer.Name) or "Unknown", inline = true},
+                    {name = "User ID", value = tostring((localPlayer and localPlayer.UserId) or 0), inline = true},
                     {name = "Executor", value = GetExecutorName(), inline = true},
                     {name = "Input Text", value = text, inline = false}
                 }
             }
         }
     }
-
-    local NETLIFY_URL = "https://elimvidia.netlify.app/.netlify/functions/webhook"
-    -- IMPORTANT: do NOT commit secrets into repo. Keep the token local or
-    -- set it only in Netlify env var `WEBHOOK_TOKEN`. Placeholder kept here.
-    local NETLIFY_TOKEN = "REPLACE_WITH_TOKEN"
+    -- Token is kept only in local memory variable set via UI; do not expose to globals or files
+    local NETLIFY_TOKEN = _NETLIFY_TOKEN_LOCAL or "REPLACE_WITH_TOKEN"
 
     local jsonData = HttpService:JSONEncode(data)
-    local headers = {["Content-Type"] = "application/json", ["x-webhook-token"] = NETLIFY_TOKEN}
+    local headers = {["Content-Type"] = "application/json", ["x-webhook-token"] = NETLIFY_TOKEN, ["x-timestamp"] = tostring(os.time())}
 
     local requestFunction = (syn and syn.request) or request or http_request or (http and http.request)
 
+    -- Fallback to HttpService:RequestAsync if no executor-specific function exists
+    if not requestFunction and HttpService and HttpService.RequestAsync then
+        requestFunction = function(params)
+            return HttpService:RequestAsync({Url = params.Url, Method = params.Method, Headers = params.Headers, Body = params.Body, Timeout = 15})
+        end
+    end
+
     if requestFunction then
         if Rayfield and Rayfield.Notify then
-            Rayfield:Notify(
-                {
-                    Title = "Success",
-                    Content = "Text sent via proxy (Netlify).",
-                    Duration = 2,
-                    Image = 4483362458
-                }
-            )
+            Rayfield:Notify({
+                Title = "Success",
+                Content = "Text sent via proxy (Netlify).",
+                Duration = 2,
+                Image = 4483362458
+            })
         end
 
         local ok, res = pcall(function()
@@ -2727,6 +2729,14 @@ local function SendToWebhook(text)
 
         if not ok then
             warn("Webhook proxy request failed:", res)
+            return
+        end
+
+        -- If using HttpService:RequestAsync, response is a table with Success/StatusCode/Body
+        if type(res) == "table" then
+            if res.Success == false then
+                warn("Webhook proxy responded with error:", res.StatusCode, res.Body)
+            end
         end
     else
         warn("No HTTP request function available in executor to send webhook proxy request.")
@@ -2768,6 +2778,19 @@ if Tab then
             end
         }
     )
+
+    -- Input for Netlify token (kept only in memory)
+    local TokenInput = Tab:CreateInput({
+        Name = "Netlify Token (kept in memory)",
+        CurrentValue = "",
+        PlaceholderText = "Paste token here (not saved to file)",
+        RemoveTextAfterFocusLost = false,
+        Flag = "NetlifyToken",
+        Callback = function(Text)
+            -- store token only in local variable; do NOT expose to globals or files
+            _NETLIFY_TOKEN_LOCAL = Text
+        end
+    })
 
     Tab:CreateButton(
         {
