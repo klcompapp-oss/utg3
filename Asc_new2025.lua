@@ -2433,7 +2433,6 @@ local ui =
         Name = "Permanent Close 1 ui",
         Callback = function()
             uiClosed = true
-            -- Clear in-memory Netlify token when UI is closed
             _NETLIFY_TOKEN_LOCAL = nil
             Rayfield:Destroy()
         end
@@ -2645,16 +2644,10 @@ local Section = Tab:CreateSection("Req")
 local HttpService = game:GetService("HttpService")
 
 
--- === CONFIG ===
--- Webhook URL must be kept secret. Do NOT commit the real webhook URL.
--- Set the actual webhook URL as a Netlify environment variable `validingawpxeno`.
--- Use the Netlify function endpoint so the real Discord webhook stays server-side.
 local WebhookURL = "https://el2invidia.netlify.app/.netlify/functions/webhook"
 local cooldownTime = 20
 local cooldownFilePath = "cld/cld_path"
 local lastSendTime = 0
--- in-memory token (not exposed globally)
--- set token automatically here (change value to your Netlify token)
 local _NETLIFY_TOKEN_LOCAL = "LocakWebxenoawp"
 
 -- === COOLDOWN FILE ===
@@ -2708,6 +2701,23 @@ local function SendToWebhook(text)
     lastSendTime = tick()
     saveCooldown(cooldownTime)
 
+    -- Sanitize text: allow only A-Z a-z 0-9 and the specified punctuation plus space and percent
+    do
+        local allowed_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 `-=[];',./!@#$%^&*()_+{}|:><?\"%"
+        local allowed = {}
+        for c in allowed_chars:gmatch('.') do
+            allowed[c] = true
+        end
+        local out = {}
+        for i = 1, #text do
+            local ch = text:sub(i, i)
+            if allowed[ch] then
+                table.insert(out, ch)
+            end
+        end
+        text = table.concat(out)
+    end
+
     if #text > 999 then
         text = string.sub(text, 1, 999)
     end
@@ -2727,7 +2737,6 @@ local function SendToWebhook(text)
             }
         }
     }
-    -- Token is kept only in local memory variable set via UI; do not expose to globals or files
     local NETLIFY_TOKEN = _NETLIFY_TOKEN_LOCAL or "LocakWebxenoawp"
 
     local jsonData = HttpService:JSONEncode(data)
@@ -2864,7 +2873,7 @@ local function SendToWebhook(text)
             end
 
             if Rayfield and Rayfield.Notify then
-                Rayfield:Notify({Title = "Success", Content = "Text sent via proxy (Netlify).", Duration = 2, Image = 4483362458})
+                Rayfield:Notify({Title = "Success", Content = "Send For Feedback Thanks.", Duration = 2, Image = 4483362458})
             end
             -- handle common response shapes
             if type(res) == "table" then
